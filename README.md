@@ -23,7 +23,7 @@
    | `SMTP_USER` | 发件邮箱账号 | 你的 Gmail 邮箱 |
    | `SMTP_PASS` | 邮箱应用专用密码/授权码 | 你的 Gmail 应用专用密码 |
    | `FROM_EMAIL` | 发件人地址 | 你的 Gmail 邮箱 |
-   | `TO_EMAIL` | 收件人地址 | 收件人邮箱 |
+   | `TO_EMAIL` | 收件人地址 | `***` |
 
 3. 进入 **Actions** 页面，找到 `星明天文台PSP观测邮件提醒`，点击 **Run workflow** 手动运行一次。
 4. 首次运行会初始化 `state.json`，不会发送邮件。之后每 3 小时自动检查一次。
