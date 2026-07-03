@@ -5,15 +5,18 @@ import smtplib
 import time
 from email.mime.text import MIMEText
 from pathlib import Path
+from urllib.parse import urljoin
 
 import requests
 
-URL = "https://download.china-vo.org/psp/next/"
+URL = "https://download.china-vo.org/psp/hmt/PSP-HMT-DATA/data/"
 STATE_FILE = Path("state.json")
-DATE_FOLDER_RE = re.compile(r'href="(\d{8})/"')
+DATE_FOLDER_RE = re.compile(r"^\d{8}$")
+SUBFOLDER_RE = re.compile(r'href="([^"]+)/"')
+START_YEAR_MONTH = (2026, 7)  # 只监控该年月及之后的日期文件夹
 
 
-def fetch_date_folders(retries=3):
+def fetch_page(page_url, retries=3):
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -26,10 +29,10 @@ def fetch_date_folders(retries=3):
     for attempt in range(1, retries + 1):
         try:
             resp = requests.get(
-                URL, headers=headers, proxies=proxies, timeout=30
+                page_url, headers=headers, proxies=proxies, timeout=30
             )
             resp.raise_for_status()
-            return sorted(set(DATE_FOLDER_RE.findall(resp.text)))
+            return resp.text
         except requests.RequestException as e:
             last_error = e
             print(f"请求失败（{attempt}/{retries}）: {e}")
@@ -39,10 +42,63 @@ def fetch_date_folders(retries=3):
     raise last_error
 
 
+def parse_subfolders(html, base_url):
+    seen_names = set()
+    subfolders = []
+    for match in SUBFOLDER_RE.finditer(html):
+        name = match.group(1)
+        if name == "..":
+            continue
+        if name in seen_names:
+            continue
+        seen_names.add(name)
+        subfolders.append(urljoin(base_url, name + "/"))
+    return subfolders
+
+
+def should_skip(folder_url):
+    """根据 START_YEAR_MONTH 判断是否需要跳过该文件夹。"""
+    relative = folder_url[len(URL):].strip("/").split("/")
+    depth = len(relative)
+    if depth == 1 and relative[0].isdigit() and len(relative[0]) == 4:
+        return int(relative[0]) < START_YEAR_MONTH[0]
+    if depth >= 2 and relative[0].isdigit() and len(relative[0]) == 4 and relative[1].isdigit():
+        return (int(relative[0]), int(relative[1])) < START_YEAR_MONTH
+    return False
+
+
+def collect_date_folders(page_url, visited=None):
+    if visited is None:
+        visited = set()
+    if page_url in visited:
+        return set()
+    visited.add(page_url)
+
+    html = fetch_page(page_url)
+    date_folders = set()
+    for sub in parse_subfolders(html, page_url):
+        name = sub.rstrip("/").split("/")[-1]
+        if should_skip(sub):
+            continue
+        if DATE_FOLDER_RE.match(name):
+            date_folders.add(sub)
+        else:
+            date_folders.update(collect_date_folders(sub, visited))
+    return date_folders
+
+
+def fetch_date_folders():
+    return sorted(collect_date_folders(URL))
+
+
 def load_seen():
     if STATE_FILE.exists():
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        return set(data.get("seen", []))
+        seen = set(data.get("seen", []))
+        # 兼容旧格式：旧状态保存的是 8 位日期字符串，新格式是完整 URL
+        if seen and not all(isinstance(s, str) and s.startswith("http") for s in seen):
+            return set()
+        return seen
     return set()
 
 
@@ -61,8 +117,9 @@ def send_email(new_folders):
     from_email = os.environ["FROM_EMAIL"]
     to_email = os.environ["TO_EMAIL"]
 
-    urls = "\n".join(f"{URL}{name}/" for name in new_folders)
-    subject = f"[NEXT] 观测提醒：{', '.join(new_folders)}"
+    names = [f.rstrip("/").split("/")[-1] for f in new_folders]
+    urls = "\n".join(new_folders)
+    subject = f"[PSP] 观测提醒：{', '.join(names)}"
     body = f"检测到以下新日期文件夹：\n\n{urls}\n\n-- \n自动监控提醒"
 
     msg = MIMEText(body, "plain", "utf-8")

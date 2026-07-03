@@ -1,4 +1,4 @@
-name: 星明天文台NEXT光谱观测邮件提醒
+name: 星明天文台PSP观测邮件提醒
 
 on:
   schedule:
